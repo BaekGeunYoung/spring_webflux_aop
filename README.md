@@ -44,5 +44,60 @@ class TestServiceImpl: TestService {
     }
 }
 ```
+```
+17:39:44.921 [Test worker] DEBUG org.springframework.web.client.RestTemplate - HTTP GET http://localhost:8080/test
+17:39:44.921 [Test worker] DEBUG org.springframework.web.client.RestTemplate - Accept=[text/plain, application/json, application/*+json, */*]
+17:39:44.924 [Test worker] DEBUG org.springframework.web.client.RestTemplate - Response 204 NO_CONTENT
+1.4330942
+```
+
+해당 api 요청을 100번 수행하는 데 1.43초 정도가 걸렸다. 이에 반해 기존의 spring MVC를 이용해 같은 작업을 수행하면 2분이 넘는 시간이 걸린다. 또한 요청을 수행하면서 사용하게 되는 스레드의 수 또한 blocking I/O 방식에서는 10개의 스레드를 쓰는 것을 확인하였고, nonblocking 방식에서는 1개의 스레드만을 사용하는 것을 확인할 수 있었다.
 
 ## spring AOP
+
+AOP란 Aspect Oriented Programming (관점 지향 프로그래밍)의 약자로, 애플리케이션 내에서 실행되는 로직을 핵심적인 관점과 부수적인 관점으로 나누어 비즈니스 로직을 명시적으로 분리하려는 목적을 가지고 있다.
+
+### AOP의 주요 개념
+
+- **Aspect** : 위에서 설명한 흩어진 관심사를 모듈화 한 것. 주로 부가기능을 모듈화함.
+- **Target** : Aspect를 적용하는 곳 (클래스, 메서드 .. )
+- **Advice** : 실질적으로 어떤 일을 해야할 지에 대한 것, 실질적인 부가기능을 담은 구현체
+- **JoinPoint** : Advice가 적용될 위치, 끼어들 수 있는 지점. 메서드 진입 지점, 생성자 호출 시점, 필드에서 값을 꺼내올 때 등 다양한 시점에 적용가능
+- **PointCut** : JoinPoint의 상세한 스펙을 정의한 것. 'A란 메서드의 진입 시점에 호출할 것'과 같이 더욱 구체적으로 Advice가 실행될 지점을 정할 수 있음
+
+### LogAspect
+
+가장 대표적인 부가기능 중 하나인 로깅 작업을 AOP로 분리하는 LogAspect라는 클래스를 정의했다.
+
+```kotlin
+@Component
+@Aspect
+class LogAspect {
+    private val logger: Logger = LoggerFactory.getLogger(LogAspect::class.java)
+
+    @Around("execution(* com.geunyoung.webflux_practice..*.TestHandler.*(..))")
+    fun logAdvice(pjp: ProceedingJoinPoint): Any {
+        val packageName = pjp.signature.declaringTypeName
+        val methodName = pjp.signature.name
+
+        logger.info("$packageName : $methodName - start")
+        val start = System.currentTimeMillis()
+        val retVal = pjp.proceed()
+        logger.info("$packageName : $methodName - end")
+        val end = System.currentTimeMillis()
+        logger.info("elapsed time: ${end - start}")
+
+        return retVal
+    }
+}
+```
+
+이 advice는 TestHandler 내의 메소드를 실행할 때마다 실행되며, 메소드의 시작과 종료, 실행 시간 등을 로깅한다.
+
+```
+2020-05-30 17:39:43.991  INFO 19728 --- [ctor-http-nio-2] c.g.webflux_practice.apsect.LogAspect    : com.geunyoung.webflux_practice.handler.TestHandler : test - start
+2020-05-30 17:39:44.009  INFO 19728 --- [ctor-http-nio-2] c.g.webflux_practice.apsect.LogAspect    : com.geunyoung.webflux_practice.handler.TestHandler : test - end
+2020-05-30 17:39:44.009  INFO 19728 --- [ctor-http-nio-2] c.g.webflux_practice.apsect.LogAspect    : elapsed time: 17
+```
+
+이전까지 spring boot로 애플리케이션을 개발할 때는 컨트롤러에 존재하는 모든 메소드의 앞뒤에 명시적으로 로그를 남겼었는데, 위와 같이 AOP를 통해 비즈니스 로직에 더 집중할 수 있게 되었고, 불필요하게 재사용되는 코드 또한 줄일 수 있게 되었다.
